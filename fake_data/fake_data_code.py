@@ -2,11 +2,11 @@ import pandas as pd
 import random
 from faker import Faker
 import re
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
 
-# Skapa en Faker-instans med svenska inställningar
 fake = Faker('sv_SE')
 
-# Definiera en lista med slumpmässiga varor
 produkter = [
     "Laptop", "Mobiltelefon", "Surfplatta", "Hörlurar", "Smartklocka",
     "Kamera", "TV", "Högtalare", "Spelkonsol", "Skrivare", "Router"
@@ -25,55 +25,71 @@ def generera_telefonnummer():
     telefonnummer = prefix + nummer
     return telefonnummer
 
-# Funktion för att generera kunddata
 def generera_kunddata(antal_rader):
     data = []
 
+    registration_start_date = datetime.now() - timedelta(days=1094)  # 3 år sedan
+    registration_end_date = datetime.now() - timedelta(days=1)  # Igår
+
+    order_start_date = datetime.now() - timedelta(days=365)
+    order_end_date = datetime.now()
+
     for _ in range(antal_rader):
-        # Generera namn och e-post
         first_name = fake.first_name()
         last_name = fake.last_name()
         namn = f"{first_name} {last_name}"
         
-        # Rensa bokstäver och skapa e-postadress
         first_name_clean = replace_bokstaver(first_name)
         last_name_clean = replace_bokstaver(last_name)
-        email_domain = random.choice(['gmail.com', 'email.com', 'email.se', 'outlook.com'])
+        
+        email_domain = random.choice(['gmail.com', 'email.com', 'email.se', 'outlook.com', 'hotmail.com', 'live.se'])
         email = f"{first_name_clean}.{last_name_clean}@{email_domain}"
         
-        # Generera telefonnummer
         telefon = generera_telefonnummer()
-        
-        # Generera adress, stad och postnummer
-        gatuadress = fake.street_address()  # Hämta en gatuadress
-        stad = fake.city()  # Hämta en stad
-        postnummer = fake.postcode()  # Hämta ett postnummer
 
-        # Kombinera gatuadress, stad och postnummer i en kolumn
+        gatuadress = fake.street_address()
+        stad = fake.city()
+        postnummer = fake.postcode()
+
         full_adress = f"{gatuadress}, {stad}, {postnummer}"
 
-        # Generera produktinformation
+        fodelsedatum = fake.date_of_birth(minimum_age=18, maximum_age=65)
+        fodelsedatum_str = fodelsedatum.strftime('%Y-%m-%d')
+
+        registration_date = fake.date_between_dates(
+            date_start=fodelsedatum + relativedelta(years=18),
+            date_end=registration_end_date.date()
+        )
+
+        registration_timestamp = datetime.combine(registration_date, datetime.min.time())
+        kundregistrering = registration_timestamp.strftime('%Y-%m-%d')
+
+        time_diff = order_end_date - registration_timestamp
+        random_seconds = random.uniform(0, time_diff.total_seconds())
+        order_timestamp = registration_timestamp + timedelta(seconds=random_seconds)
+        ordertid = order_timestamp.strftime('%Y-%m-%d %H:%M:%S')
+
         produkt = random.choice(produkter)
         kvantitet = random.randint(1, 5)
-        pris_per_enhet = round(random.uniform(100, 15000), 2)  # Pris mellan 100 kr och 15000 kr
+        pris_per_enhet = round(random.uniform(100, 15000), 2)
         total_pris = round(pris_per_enhet * kvantitet, 2)
 
-        # Lägg till en rad med kunddata
         data.append({
             "Kundnamn": namn,
+            "Födelsedatum": fodelsedatum_str,
             "Email": email,
             "Telefon": telefon,
-            "Full adress": full_adress,  # Lägg till full adress i en kolumn
+            "Full adress": full_adress,
+            "Kundregistrering": kundregistrering,
             "Produkt": produkt,
             "Kvantitet": kvantitet,
             "Pris per enhet (kr)": pris_per_enhet,
-            "Total pris (kr)": total_pris
+            "Total pris (kr)": total_pris,
+            "Ordertid": ordertid
         })
 
     return pd.DataFrame(data)
 
-# Generera 500,000 rader kunddata
-kunddata = generera_kunddata(500000)
+kunddata = generera_kunddata(500)
 
-# Spara data till en Excel-fil
 kunddata.to_excel("kunddata_webbshop.xlsx", index=False, engine='openpyxl')
