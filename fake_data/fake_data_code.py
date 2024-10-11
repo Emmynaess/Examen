@@ -38,7 +38,7 @@ def generera_kunddata(antal_rader):
         # Rensa bokstäver och skapa e-postadress
         first_name_clean = replace_bokstaver(first_name)
         last_name_clean = replace_bokstaver(last_name)
-        email_domain = random.choice(['gmail.com', 'email.com', 'email.se', 'outlook.com'])
+        email_domain = random.choice(['Hotmail.se','Hotmail.com','live.se','gmail.se','gmail.com', 'email.com', 'email.se', 'outlook.com'])
         email = f"{first_name_clean}.{last_name_clean}@{email_domain}"
         
         # Generera telefonnummer
