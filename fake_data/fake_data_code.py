@@ -42,7 +42,7 @@ def generera_kunddata(antal_rader):
         first_name_clean = replace_bokstaver(first_name)
         last_name_clean = replace_bokstaver(last_name)
         
-        email_domain = random.choice(['gmail.com', 'email.com', 'email.se', 'outlook.com', 'hotmail.com', 'live.se'])
+        email_domain = random.choice(['Hotmail.se','Hotmail.com','live.se','gmail.se','gmail.com', 'email.com', 'email.se', 'outlook.com'])
         email = f"{first_name_clean}.{last_name_clean}@{email_domain}"
         
         telefon = generera_telefonnummer()
