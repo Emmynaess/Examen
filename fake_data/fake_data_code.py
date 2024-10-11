@@ -3,15 +3,10 @@ import random
 from faker import Faker
 import re
 
-# addressinfo hamnar i samma kolumn i excel
-# lägga till adress och gatnummer
-# Lägg till så att det hamnar i excel och inte csv fil
-
-# ändrat så det bara är svenska telefonnummer
-# ändrat så att email stämmer överens med kundnamn + tagit bort å ä ö ur emailadressen
-
+# Skapa en Faker-instans med svenska inställningar
 fake = Faker('sv_SE')
 
+# Definiera en lista med slumpmässiga varor
 produkter = [
     "Laptop", "Mobiltelefon", "Surfplatta", "Hörlurar", "Smartklocka",
     "Kamera", "TV", "Högtalare", "Spelkonsol", "Skrivare", "Router"
@@ -30,36 +25,45 @@ def generera_telefonnummer():
     telefonnummer = prefix + nummer
     return telefonnummer
 
+# Funktion för att generera kunddata
 def generera_kunddata(antal_rader):
     data = []
 
     for _ in range(antal_rader):
+        # Generera namn och e-post
         first_name = fake.first_name()
         last_name = fake.last_name()
         namn = f"{first_name} {last_name}"
-
+        
+        # Rensa bokstäver och skapa e-postadress
         first_name_clean = replace_bokstaver(first_name)
         last_name_clean = replace_bokstaver(last_name)
         email_domain = random.choice(['gmail.com', 'email.com', 'email.se', 'outlook.com'])
         email = f"{first_name_clean}.{last_name_clean}@{email_domain}"
-
+        
+        # Generera telefonnummer
         telefon = generera_telefonnummer()
-        adress = fake.street_address().replace('\n', ', ')
-        stad = fake.city()
-        postnummer = fake.postcode()
+        
+        # Generera adress, stad och postnummer
+        gatuadress = fake.street_address()  # Hämta en gatuadress
+        stad = fake.city()  # Hämta en stad
+        postnummer = fake.postcode()  # Hämta ett postnummer
 
+        # Kombinera gatuadress, stad och postnummer i en kolumn
+        full_adress = f"{gatuadress}, {stad}, {postnummer}"
+
+        # Generera produktinformation
         produkt = random.choice(produkter)
         kvantitet = random.randint(1, 5)
-        pris_per_enhet = round(random.uniform(100, 15000), 2)
+        pris_per_enhet = round(random.uniform(100, 15000), 2)  # Pris mellan 100 kr och 15000 kr
         total_pris = round(pris_per_enhet * kvantitet, 2)
 
+        # Lägg till en rad med kunddata
         data.append({
             "Kundnamn": namn,
             "Email": email,
             "Telefon": telefon,
-            "Adress": adress,
-            "Stad": stad,
-            "Postnummer": postnummer,
+            "Full adress": full_adress,  # Lägg till full adress i en kolumn
             "Produkt": produkt,
             "Kvantitet": kvantitet,
             "Pris per enhet (kr)": pris_per_enhet,
@@ -68,7 +72,8 @@ def generera_kunddata(antal_rader):
 
     return pd.DataFrame(data)
 
-# börjar med hundra nu i testläget
-kunddata = generera_kunddata(100)
+# Generera 500,000 rader kunddata
+kunddata = generera_kunddata(500000)
 
+# Spara data till en Excel-fil
 kunddata.to_excel("kunddata_webbshop.xlsx", index=False, engine='openpyxl')
