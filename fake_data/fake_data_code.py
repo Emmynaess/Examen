@@ -93,3 +93,9 @@ def generera_kunddata(antal_rader):
 kunddata = generera_kunddata(500)
 
 kunddata.to_excel("kunddata_webbshop.xlsx", index=False, engine='openpyxl')
+
+adress_data = kunddata[['Full adress']].copy()
+adress_data[['Adress', 'Stad', 'Postnummer']] = adress_data['Full adress'].str.extract(r'(.+),\s*(.+),\s*(\d+)$')
+adress_data = adress_data.drop(columns=['Full adress'])
+
+adress_data.to_excel("kunddata_adresser_kontroll.xlsx", index=False, engine='openpyxl')
