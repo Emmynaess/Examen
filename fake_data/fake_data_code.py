@@ -14,41 +14,37 @@ produkter = [
 ]
 
 def replace_bokstaver(s):
-
     s = s.lower()
-    s = s.replace('å', 'a').replace('ä', 'a').replace('ö', 'o')
+    s = re.sub(r'[^a-zåäö]', '', s)
     s = s.replace('é', 'e').replace('ü', 'u')
-    s = re.sub(r'[^a-z]', '', s)
     return s
 
 def generera_telefonnummer():
-
     prefix = random.choice(['+4670', '+4672', '+4673', '+4676', '+4679'])
     nummer = ''.join([str(random.randint(0, 9)) for _ in range(7)])
     telefonnummer = prefix + nummer
     return telefonnummer
 
 def introduce_errors(row):
-
     if random.random() < 0.1:
         row['Email'] = None
 
-    if random.random() < 0.05:
+    if random.random() < 0.02:
         row['Kundnamn'] = row['Kundnamn'] + ' ###'
 
     if random.random() < 0.1:
         row['Telefon'] = '12' + ''.join([str(random.randint(0, 9)) for _ in range(random.choice([5, 15]))])
 
-    if random.random() < 0.05:
+    if random.random() < 0.03:
         row['Total pris (kr)'] = -abs(row['Total pris (kr)'])
 
-    if random.random() < 0.05:
+    if random.random() < 0.001:
         row['Ordertid'] = ''
 
     if random.random() < 0.02:
         row['Full adress'] = row['Full adress'] + ', ###'
 
-    if random.random() < 0.05:
+    if random.random() < 0.002:
         row['Födelsedatum'] = '0000-00-00'
 
     if random.random() < 0.1:
@@ -57,17 +53,19 @@ def introduce_errors(row):
     if random.random() < 0.05:
         row['Kvantitet'] = -random.randint(1, 5)
 
-    if random.random() < 0.1:
+    if random.random() < 0.004:
         row['Pris per enhet (kr)'] = -round(random.uniform(100, 500000), 2)
 
-    if random.random() < 0.03:
+    if random.random() < 0.01:
         row['Kundregistrering'] = ''
 
     return row
 
 def generera_kunddata(antal_rader):
-    
     data = []
+
+    fornamn_list = [fake.first_name() for _ in range(antal_rader)]
+    efternamn_list = [fake.last_name() for _ in range(antal_rader)]
 
     registration_start_date = datetime.now() - timedelta(days=1094)
     registration_end_date = datetime.now() - timedelta(days=1)
@@ -75,17 +73,16 @@ def generera_kunddata(antal_rader):
     order_start_date = datetime.now() - timedelta(days=365)
     order_end_date = datetime.now()
 
-    for _ in range(antal_rader):
-        first_name = fake.first_name()
-        last_name = fake.last_name()
-        namn = f"{first_name} {last_name}"
-        
+    for i in range(antal_rader):
+        first_name = fornamn_list[i]
+        last_name = efternamn_list[i]
+
         first_name_clean = replace_bokstaver(first_name)
         last_name_clean = replace_bokstaver(last_name)
-        
-        email_domain = random.choice(['Hotmail.se','Hotmail.com','live.se','gmail.se','gmail.com', 'email.com', 'email.se', 'outlook.com'])
+
+        email_domain = random.choice(['Hotmail.se', 'Hotmail.com', 'live.se', 'gmail.se', 'gmail.com', 'email.com', 'email.se', 'outlook.com'])
         email = f"{first_name_clean}.{last_name_clean}@{email_domain}"
-        
+
         telefon = generera_telefonnummer()
 
         gatuadress = fake.street_address()
@@ -116,7 +113,7 @@ def generera_kunddata(antal_rader):
         total_pris = round(pris_per_enhet * kvantitet, 2)
 
         row = {
-            "Kundnamn": namn,
+            "Kundnamn": f"{first_name} {last_name}",
             "Födelsedatum": fodelsedatum_str,
             "Email": email,
             "Telefon": telefon,
@@ -135,14 +132,15 @@ def generera_kunddata(antal_rader):
 
 kunddata = generera_kunddata(500000)
 
+print("Antal rader genererade:", len(kunddata))
+
 adress_data = kunddata[['Full adress']].copy()
 adress_data[['Adress', 'Stad', 'Postnummer']] = adress_data['Full adress'].str.extract(r'(.+),\s*(.+),\s*(\d+)$')
 adress_data = adress_data.drop(columns=['Full adress'])
-
-adress_data.to_excel("kunddata_adresser_kontroll.xlsx", index=False, engine='openpyxl')
+adress_data.to_excel("kunddata_adresser_kontroll1.xlsx", index=False, engine='openpyxl')
 
 kunddata = kunddata.apply(introduce_errors, axis=1)
 
-kunddata.to_excel("kunddata_webbshop.xlsx", index=False, engine='openpyxl')
+kunddata.to_excel("kunddata_webbshop1.xlsx", index=False, engine='openpyxl')
 
-print("Kunddata och kontrollfil skapades. Fel har introducerats i 'kunddata_webbshop.xlsx'.")
+print("Kunddata och kontrollfil skapades. Fel har introducerats i 'kunddata_webbshop1.xlsx'.")

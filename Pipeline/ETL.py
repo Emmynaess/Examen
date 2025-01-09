@@ -1,13 +1,11 @@
 import pyodbc
 import os
 import pandas as pd
-import re
 import gc
-import numpy as np
+import re
 import phonenumbers
 import datetime
 from phonenumbers import NumberParseException, is_valid_number, format_number, PhoneNumberFormat
-import datetime
 from decimal import Decimal, ROUND_HALF_UP
 
 Customer_Database = 'Customer_Database'
@@ -21,15 +19,17 @@ Connection_string = (
     'UID=Admin;'
     'PWD=admin;'
     'Encrypt=no;'
+    'Packet Size=16384;' 
 )
+
+print('Koden startar')
+current_dir = os.getcwd()
+Kunddata_Webbshop = os.path.join(current_dir, 'kunddata_webbshop1.xlsx') 
+Control_Data = os.path.join(current_dir, 'kunddata_adresser_kontroll1.xlsx')
+Slaskfil = os.path.join(current_dir, 'slaskfil.xlsx')
 
 Connect = pyodbc.connect(Connection_string, autocommit=True)
 Cursor = Connect.cursor()
-
-current_dir = os.getcwd()
-Kunddata_Webbshop = os.path.join(current_dir, 'kunddata_webbshop.xlsx') 
-Control_Data = os.path.join(current_dir, 'kunddata_adresser_kontroll.xlsx')
-Slaskfil = os.path.join(current_dir, 'slaskfil.xlsx')
 
 def Create_Database ():
 
@@ -151,7 +151,6 @@ def Create_Table_Purchase():
     except Exception as e:
         print(f"Error occurred while creating '{Purchase_Table}': {e}")
 
-
 def Create_Slask():
 
     Slask_data = Webshop_Data[Webshop_Data['Slask'] == True]
@@ -222,6 +221,7 @@ def Control_Names(Webshop_Data):
 def Control_Adress(Webshop_Data, Control_Data):
 
     try:
+        Slask_data = []
 
         Webshop_Data['Full adress'] = Webshop_Data['Full adress'].astype(str).str.strip()
         adress_split = Webshop_Data['Full adress'].str.split(',', expand=True, n=2)
@@ -229,6 +229,7 @@ def Control_Adress(Webshop_Data, Control_Data):
         if adress_split.shape[1] != 3:
             print("Step 3.1: Split did not produce 3 columns. Marking all rows as invalid.")
             Webshop_Data['Slask'] = True
+            Slask_data.extend(Webshop_Data.index.tolist())
             return Webshop_Data
 
         adress_split.columns = ['StreetName', 'City', 'PostalCode']
@@ -238,7 +239,7 @@ def Control_Adress(Webshop_Data, Control_Data):
         Webshop_Data['City'] = Webshop_Data['City'].str.strip().str.title()
         Webshop_Data['PostalCode'] = Webshop_Data['PostalCode'].str.strip().apply(lambda x: re.sub(r'[^0-9]', '', str(x)))
 
-        Webshop_Data['Slask'] = False
+        rows_to_check = ~Webshop_Data['Slask']
 
         Control_Data['Adress'] = Control_Data['Adress'].str.strip().str.title()
         Control_Data['Stad'] = Control_Data['Stad'].str.strip().str.title()
@@ -248,34 +249,36 @@ def Control_Adress(Webshop_Data, Control_Data):
         Control_Data['Key'] = Control_Data['Adress'] + '|' + Control_Data['Stad'] + '|' + Control_Data['Postnummer']
 
         valid_keys = set(Control_Data['Key'])
-        Webshop_Data['Slask'] = ~Webshop_Data['Key'].isin(valid_keys)
+        Webshop_Data.loc[rows_to_check, 'Slask'] = ~Webshop_Data.loc[rows_to_check, 'Key'].isin(valid_keys)
+
+        Slask_data.extend(Webshop_Data.index[Webshop_Data['Slask']].tolist())
 
         Webshop_Data.drop(columns=['Full adress', 'Key'], inplace=True)
 
-        return Webshop_Data
+        print(f"Control_Adress: {len(Slask_data)} rows were sent to the slask file.")
 
     except Exception as e:
         print(f"An error occurred: {e}")
         Webshop_Data['Slask'] = True
-        return Webshop_Data
+        Slask_data.extend(Webshop_Data.index.tolist())
+
+    return Webshop_Data
 
 def Control_Birthdate(Webshop_Data):
-    
     Slask_data = []
 
     for index, row in Webshop_Data.iterrows():
-        birthdate = row['Födelsedatum']
+        if row.get('Slask', False):
+            continue
 
+        birthdate = row['Födelsedatum']
         if birthdate == "0000-00-00" or pd.isnull(birthdate) or not str(birthdate).strip():
             Webshop_Data.at[index, 'Slask'] = True
             Slask_data.append(index)
             continue
-
         try:
-
             birthdate = pd.to_datetime(birthdate, format='%Y-%m-%d', errors='raise').date()
             age = (pd.Timestamp.now().date() - birthdate).days // 365
-
             if age < 18:
                 Webshop_Data.at[index, 'Slask'] = True
                 Slask_data.append(index)
@@ -285,126 +288,169 @@ def Control_Birthdate(Webshop_Data):
         except Exception as e:
             Webshop_Data.at[index, 'Slask'] = True
             Slask_data.append(index)
+
             print(f"Error processing birthdate for row {index}: {e}")
 
     if 'Födelsedatum' in Webshop_Data.columns:
         Webshop_Data.drop(columns=['Födelsedatum'], inplace=True)
-
     print(f"Control_Birthdate: {len(Slask_data)} rows were sent to the slask file.")
     
     return Webshop_Data
 
 def Control_Email(Webshop_Data):
+    try:
+        if 'Slask' not in Webshop_Data.columns:
+            Webshop_Data['Slask'] = False
 
-    Slask_data = []
+        Slask_data = []
 
-    if 'Email_duplicate' not in Webshop_Data.columns:
-        Webshop_Data['Email_duplicate'] = False
+        Webshop_Data['Email'] = Webshop_Data['Email'].astype(str)
 
-    for index, row in Webshop_Data.iterrows():
-        email = row['Email']
+        for index, row in Webshop_Data.iterrows():
+            if row.get('Slask', False):
+                continue
 
-        if pd.isnull(email) or not str(email).strip():
-            Webshop_Data.at[index, 'Slask'] = True
-            Slask_data.append(index)
-            continue
+            email = row['Email']
+            
+            if pd.isnull(email) or email.strip() == '':
+                Webshop_Data.at[index, 'Slask'] = True
+                Slask_data.append(index)
+                continue
 
-        if '@' not in email or '.' not in email.split('@')[-1]:
-            Webshop_Data.at[index, 'Slask'] = True
-            Slask_data.append(index)
-            continue
+            invalid_email = not bool(re.match(r'^[a-zA-Z0-9._%+-åäöÅÄÖ]+@[a-zA-Z0-9.-åäöÅÄÖ]+\.[a-zA-Z]{2,}$', email))
+            if invalid_email:
+                Webshop_Data.at[index, 'Slask'] = True
+                Slask_data.append(index)
 
-    print(f"Control_Email: {len(Slask_data)} rows were sent to the slask file.")
-    
-    return Webshop_Data
+        print(f"Control_Email: {len(Slask_data)} rows were sent to the slask file.")
+
+    except Exception as e:
+        print(f"Fel vid kontroll av e-post: {e}")
 
 def Control_Phone(Webshop_Data):
 
-    Slask_data = []
+    try:
+        if 'Slask' not in Webshop_Data.columns:
+            Webshop_Data['Slask'] = False
 
-    for index, row in Webshop_Data.iterrows():
-        phone = str(row.get('Telefon', '')).strip()
+        Slask_data = []
 
-        if pd.isnull(phone) or not phone:
-            Webshop_Data.at[index, 'Slask'] = True
-            Slask_data.append(index)
-            continue
+        if 'PhoneNumber' not in Webshop_Data.columns:
+            Webshop_Data['PhoneNumber'] = None
 
-        phone = phone.replace(" ", "")
+        for index, row in Webshop_Data.iterrows():
+            if row.get('Slask', False):
+                continue
 
-        try:
+            phone = str(row.get('Telefon', '')).strip()
 
-            parsed_phone = phonenumbers.parse(phone, "SE")
-            if is_valid_number(parsed_phone):
-                formatted_phone = format_number(parsed_phone, PhoneNumberFormat.INTERNATIONAL)
-                Webshop_Data.at[index, 'PhoneNumber'] = formatted_phone
-            else:
+            if pd.isnull(phone) or not phone:
                 Webshop_Data.at[index, 'Slask'] = True
                 Slask_data.append(index)
-        except NumberParseException:
-            Webshop_Data.at[index, 'Slask'] = True
-            Slask_data.append(index)
+                continue
 
-    Webshop_Data['PhoneNumber'] = Webshop_Data['PhoneNumber'].str.replace(" ", "")
+            phone = phone.replace(" ", "")
 
-    if 'Telefon' in Webshop_Data.columns:
-        Webshop_Data.drop(columns=['Telefon'], inplace=True)
+            try:
+                parsed_phone = phonenumbers.parse(phone, "SE")
+                if is_valid_number(parsed_phone):
+                    formatted_phone = format_number(parsed_phone, PhoneNumberFormat.INTERNATIONAL)
+                    Webshop_Data.at[index, 'PhoneNumber'] = formatted_phone
+                else:
+                    Webshop_Data.at[index, 'Slask'] = True
+                    Slask_data.append(index)
+            except NumberParseException:
+                Webshop_Data.at[index, 'Slask'] = True
+                Slask_data.append(index)
+
+        Webshop_Data['PhoneNumber'] = Webshop_Data['PhoneNumber'].str.replace(" ", "", regex=True)
+
+        if 'Telefon' in Webshop_Data.columns:
+            Webshop_Data.drop(columns=['Telefon'], inplace=True)
+
+        print(f"Control_Phone: {len(Slask_data)} rows were sent to the slask file.")
+
+    except Exception as e:
+        print(f"An error occurred in Control_Phone: {e}")
 
     return Webshop_Data
 
 def Control_Customer_Registration(Webshop_Data):
+    try:
+        if 'Slask' not in Webshop_Data.columns:
+            Webshop_Data['Slask'] = False
 
-    Slask_data = []
+        Slask_data = []
 
-    for index, row in Webshop_Data.iterrows():
-        Customer_Registration = row['Kundregistrering']
-        
-        if Customer_Registration == "0000-00-00" or pd.isnull(Customer_Registration) or not str(Customer_Registration).strip() or Customer_Registration == "INVALID_DATE":
-            Webshop_Data.at[index, 'Slask'] = True
-            Slask_data.append(index)
-            continue
+        for index, row in Webshop_Data.iterrows():
+            if row.get('Slask', False):
+                continue
 
-        try:
+            Customer_Registration = row.get('Kundregistrering')
 
-            Customer_Registration = pd.to_datetime(Customer_Registration, format='%Y-%m-%d', errors='raise').date()
-
-            if Customer_Registration > datetime.date.today():
+            if (Customer_Registration == "0000-00-00" or 
+                pd.isnull(Customer_Registration) or 
+                not str(Customer_Registration).strip()):
                 Webshop_Data.at[index, 'Slask'] = True
                 Slask_data.append(index)
-            else:
-                Webshop_Data.at[index, 'Kundregistrering'] = Customer_Registration
+                continue
 
-        except Exception as e:
-            Webshop_Data.at[index, 'Slask'] = True
-            Slask_data.append(index)
-            print(f"Error processing Customer_Registration for row {index}: {e}")
+            try:
+                Customer_Registration = pd.to_datetime(Customer_Registration, format='%Y-%m-%d', errors='raise').date()
 
-    Webshop_Data.rename(columns={'Kundregistrering': 'Customer_Registration'}, inplace=True)
+                if Customer_Registration > datetime.date.today():
+                    Webshop_Data.at[index, 'Slask'] = True
+                    Slask_data.append(index)
+                else:
+                    Webshop_Data.at[index, 'Kundregistrering'] = Customer_Registration
 
-    print(f"Control_Customer_Registration: {len(Slask_data)} rows were sent to the slask file.")
+            except Exception as e:
+                Webshop_Data.at[index, 'Slask'] = True
+                Slask_data.append(index)
+
+        Webshop_Data.rename(columns={'Kundregistrering': 'Customer_Registration'}, inplace=True)
+
+        print(f"Control_Customer_Registration: {len(Slask_data)} rows were sent to the slask file.")
+
+    except Exception as e:
+        print(f"An error occurred in Control_Customer_Registration: {e}")
 
     return Webshop_Data
 
 def Control_Product(Webshop_Data):
 
-    Slask_data = []
+    try:
+        Slask_data = []
 
-    if 'Produkt' in Webshop_Data.columns:
-        Webshop_Data.rename(columns={'Produkt': 'Product'}, inplace=True)
-    else:
+        if 'Produkt' in Webshop_Data.columns:
+            Webshop_Data.rename(columns={'Produkt': 'Product'}, inplace=True)
+        else:
+            print("Column 'Produkt' not found. Skipping Control_Product.")
+            return Webshop_Data
+
+        for index, row in Webshop_Data.iterrows():
+
+            if row.get('Slask', False):
+                continue
+
+            try:
+                product = row['Product']
+
+                if pd.isnull(product) or str(product).strip() == '' or len(str(product).strip()) > 100:
+                    Webshop_Data.at[index, 'Slask'] = True
+                    Slask_data.append(index)
+
+            except Exception as e:
+                print(f"Error processing row {index}: {e}")
+                continue
+
+        print(f"Control_Product: {len(Slask_data)} rows were sent to the slask file.")
+
         return Webshop_Data
 
-    for index, row in Webshop_Data.iterrows():
-        product = str(row['Product']).strip()
+    except Exception as e:
+        print(f"An error occurred in Control_Product: {e}")
 
-        if pd.isnull(product) or product == '' or len(product) < 3 or len(product) > 100:
-            Webshop_Data.at[index, 'Slask'] = True
-            Slask_data.append(index)
-
-    print(f"Control_Product: {len(Slask_data)} rows were sent to the slask file.")
-
-    return Webshop_Data
-    
 def Control_Quantity(Webshop_Data):
 
     Slask_data = []
@@ -415,14 +461,18 @@ def Control_Quantity(Webshop_Data):
         return Webshop_Data
 
     for index, row in Webshop_Data.iterrows():
-        quantity = row['Quantity']
 
-        if pd.isnull(quantity) or quantity == '' or "INVALID_" in str(quantity):
-            Webshop_Data.at[index, 'Slask'] = True
-            Slask_data.append(index)
+        if row.get('Slask', False):
             continue
 
+        quantity = row['Quantity']
+
         try:
+
+            if pd.isnull(quantity) or str(quantity).strip() == '':
+                Webshop_Data.at[index, 'Slask'] = True
+                Slask_data.append(index)
+                continue
 
             quantity = int(quantity)
             if quantity <= 0:
@@ -433,125 +483,132 @@ def Control_Quantity(Webshop_Data):
             Slask_data.append(index)
 
     print(f"Control_Quantity: {len(Slask_data)} rows were sent to the slask file.")
+
     return Webshop_Data
 
 def Control_Price_Per_Product(Webshop_Data):
 
-    Slask_data = []
+    try:
+        Slask_data = []
 
-    if 'Pris per enhet (kr)' in Webshop_Data.columns:
-        Webshop_Data.rename(columns={'Pris per enhet (kr)': 'PricePerProduct'}, inplace=True)
-    else:
-        print("'Pris per enhet (kr)' kolumnen saknas.")
-        return Webshop_Data
+        if 'Pris per enhet (kr)' in Webshop_Data.columns:
+            Webshop_Data.rename(columns={'Pris per enhet (kr)': 'PricePerProduct'}, inplace=True)
+        else:
+            return Webshop_Data
 
-    for index, row in Webshop_Data.iterrows():
-        PricePerProduct = row['PricePerProduct']
+        for index, row in Webshop_Data.iterrows():
 
-        if pd.isnull(PricePerProduct) or str(PricePerProduct).strip() == '' or "INVALID_" in str(PricePerProduct):
-            Webshop_Data.at[index, 'Slask'] = True
-            Slask_data.append(index)
-            continue
+            if row.get('Slask', False):  # Hoppa över rader som redan är markerade som 'Slask'
+                continue
 
-        try:
+            PricePerProduct = row.get('PricePerProduct', None)
 
-            if isinstance(PricePerProduct, str):
-                PricePerProduct = float(PricePerProduct.replace(',', '.'))
-
-            if PricePerProduct <= 0:
+            # Kontrollera om priset är tomt, icke-numeriskt eller <= 0
+            if pd.isnull(PricePerProduct) or PricePerProduct == '' or PricePerProduct == 0:
                 Webshop_Data.at[index, 'Slask'] = True
                 Slask_data.append(index)
                 continue
 
-            Webshop_Data.at[index, 'PricePerProduct'] = round(PricePerProduct, 2)
+            try:
+                if isinstance(PricePerProduct, str):
+                    PricePerProduct = float(PricePerProduct.replace(',', '.'))
 
-        except Exception as e:
-            print(f"Fel vid konvertering av PricePerProduct för rad {index}: {e}")
-            Webshop_Data.at[index, 'Slask'] = True
-            Slask_data.append(index)
+                if PricePerProduct <= 0:
+                    Webshop_Data.at[index, 'Slask'] = True
+                    Slask_data.append(index)
+                    continue
 
-    print(f"Control_PricePerUnit: {len(Slask_data)} rows were sent to the slask file.")
+                Webshop_Data.at[index, 'PricePerProduct'] = round(PricePerProduct, 2)
+
+            except Exception:
+                Webshop_Data.at[index, 'Slask'] = True
+                Slask_data.append(index)
+
+        print(f"Control_PricePerProduct: {len(Slask_data)} rows were sent to the slask file.")
+
+    except Exception as e:
+        print(f"Error in Control_Price_Per_Product: {e}")
+
     return Webshop_Data
 
 def Control_Total_Price(Webshop_Data):
 
-    Slask_data = []
+    try:
+        Slask_data = []
 
-    if 'Total pris (kr)' in Webshop_Data.columns:
-        Webshop_Data.rename(columns={'Total pris (kr)': 'TotalPrice'}, inplace=True)
-    else:
-        print("'Total pris (kr)' kolumnen saknas.")
-        return Webshop_Data
+        if 'Total pris (kr)' in Webshop_Data.columns:
+            Webshop_Data.rename(columns={'Total pris (kr)': 'TotalPrice'}, inplace=True)
+        else:
+            return Webshop_Data
 
-    for index, row in Webshop_Data.iterrows():
-        totalprice = row['TotalPrice']
+        for index, row in Webshop_Data.iterrows():
+            totalprice = row['TotalPrice']
 
-        if pd.isnull(totalprice) or str(totalprice).strip() == '' or "INVALID_" in str(totalprice):
-            Webshop_Data.at[index, 'Slask'] = True
-            Slask_data.append(index)
-            continue
-
-        try:
-
-            if isinstance(totalprice, str):
-                totalprice = float(totalprice.replace(',', '.'))
-
-            if totalprice <= 0:
+            if pd.isnull(totalprice) or str(totalprice).strip() == '':
                 Webshop_Data.at[index, 'Slask'] = True
                 Slask_data.append(index)
                 continue
 
-            Webshop_Data.at[index, 'TotalPrice'] = round(totalprice, 2)
+            try:
 
-        except Exception as e:
-            print(f"Fel vid konvertering av totalpris för rad {index}: {e}")
-            Webshop_Data.at[index, 'Slask'] = True
-            Slask_data.append(index)
+                if isinstance(totalprice, str):
+                    totalprice = float(totalprice.replace(',', '.'))
 
-    print(f"Control_TotalPrice: {len(Slask_data)} rows were sent to the slask file.")
+                if totalprice <= 0:
+                    Webshop_Data.at[index, 'Slask'] = True
+                    Slask_data.append(index)
+                    continue
+
+                Webshop_Data.at[index, 'TotalPrice'] = round(totalprice, 2)
+
+            except Exception:
+                Webshop_Data.at[index, 'Slask'] = True
+                Slask_data.append(index)
+
+    except Exception as e:
+        pass
 
     return Webshop_Data
 
 def Control_Time_Of_Order(Webshop_Data):
 
-    Slask_data = []
+    try:
+        Slask_data = []
 
-    if 'Ordertid' in Webshop_Data.columns:
-        Webshop_Data.rename(columns={'Ordertid': 'TimeOfOrder'}, inplace=True)
-    else:
-        print("'Ordertid' kolumnen saknas.")
-        return Webshop_Data
+        if 'Ordertid' in Webshop_Data.columns:
+            Webshop_Data.rename(columns={'Ordertid': 'TimeOfOrder'}, inplace=True)
+        else:
+            return Webshop_Data
 
-    for index, row in Webshop_Data.iterrows():
-        timeoforder = row['TimeOfOrder']
+        for index, row in Webshop_Data.iterrows():
+            timeoforder = row['TimeOfOrder']
 
-        if pd.isnull(timeoforder) or str(timeoforder).strip() == '' or "INVALID_" in str(timeoforder):
-            Webshop_Data.at[index, 'Slask'] = True
-            Slask_data.append(index)
-            continue
-
-        try:
-
-            timeoforder_parsed = pd.to_datetime(timeoforder, errors='coerce', format='%Y-%m-%d %H:%M:%S')
-
-            if pd.isnull(timeoforder_parsed):
+            if pd.isnull(timeoforder) or str(timeoforder).strip() == '' or "INVALID_" in str(timeoforder):
                 Webshop_Data.at[index, 'Slask'] = True
                 Slask_data.append(index)
                 continue
 
-            Webshop_Data.at[index, 'TimeOfOrder'] = timeoforder_parsed
+            try:
 
-        except Exception as e:
-            print(f"Fel vid konvertering av ordertid för rad {index}: {e}")
-            Webshop_Data.at[index, 'Slask'] = True
-            Slask_data.append(index)
-            continue
+                timeoforder_parsed = pd.to_datetime(timeoforder, errors='coerce', format='%Y-%m-%d %H:%M:%S')
 
-    if 'Ordertid' in Webshop_Data.columns:
-        Webshop_Data.drop(columns=['Ordertid'], inplace=True)
+                if pd.isnull(timeoforder_parsed):
+                    Webshop_Data.at[index, 'Slask'] = True
+                    Slask_data.append(index)
+                    continue
 
-    print(f"Control_TimeOfOrder: {len(Slask_data)} rows were sent to the slask file.")
-    
+                Webshop_Data.at[index, 'TimeOfOrder'] = timeoforder_parsed
+
+            except Exception:
+                Webshop_Data.at[index, 'Slask'] = True
+                Slask_data.append(index)
+
+        if 'Ordertid' in Webshop_Data.columns:
+            Webshop_Data.drop(columns=['Ordertid'], inplace=True)
+
+    except Exception:
+        pass
+
     return Webshop_Data
 
 def Finalize_Slask(Webshop_Data, Slaskfil):
@@ -576,120 +633,126 @@ def Finalize_Slask(Webshop_Data, Slaskfil):
 
     return valid_data
 
-def Insert_Customer_Data(valid_data):
+def Insert_Customer_Data(valid_data, batch_size=100):
 
     try:
 
-        Use_Database = f"USE {Customer_Database}"
-        Cursor.execute(Use_Database)
+        conn = pyodbc.connect(Connection_string, autocommit=False) 
+        cursor = conn.cursor()
 
-        for index, row in valid_data.iterrows():
-            if row.get('Slask') is True:
-                continue
+        use_database_query = f"USE {Customer_Database}"
+        cursor.execute(use_database_query)
 
-            street_name = row.get('StreetName')
-            city = row.get('City')
-            postal_code = row.get('PostalCode')
-            first_name = row.get('FirstName')
-            last_name = row.get('LastName')
-            phone_number = row.get('PhoneNumber')
-            email = row.get('Email')
-            date_of_birth = row.get('DateOfBirth')
-            customer_registration = row.get('Customer_Registration')
+        for i in range(0, len(valid_data), batch_size):
+            batch = valid_data.iloc[i:i+batch_size]
+            
+            for index, row in batch.iterrows():
+                try:
+                    email = row.get('Email')
 
-            address_check_query = f"""
-                SELECT CustomerAdressID 
-                FROM {CustomerAdress_Table} 
-                WHERE StreetName = ? AND City = ? AND PostalCode = ?
-            """
-            Cursor.execute(address_check_query, street_name, city, postal_code)
-            address_id = Cursor.fetchone()
-
-            if not address_id:
-                address_insert_query = f"""
-                    INSERT INTO {CustomerAdress_Table} (StreetName, City, PostalCode) 
-                    OUTPUT INSERTED.CustomerAdressID
-                    VALUES (?, ?, ?)
-                """
-                Cursor.execute(address_insert_query, street_name, city, postal_code)
-                result = Cursor.fetchone()
-                if result:
-                    address_id = result[0]
-                else:
-                    continue
-            else:
-                address_id = address_id[0]
-
-            customer_check_query = f"""
-                SELECT CustomerID 
-                FROM {Customer_Table} 
-                WHERE FirstName = ? AND LastName = ? AND Email = ?
-            """
-            Cursor.execute(customer_check_query, first_name, last_name, email)
-            customer_id = Cursor.fetchone()
-
-            if not customer_id:
-                customer_insert_query = f"""
-                    INSERT INTO {Customer_Table} (CustomerAdressID, FirstName, LastName, Phonenumber, Email, DateOfBirth, StartOfMembership)
-                    OUTPUT INSERTED.CustomerID
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """
-                Cursor.execute(customer_insert_query, address_id, first_name, last_name, phone_number, email, date_of_birth, customer_registration)
-                result = Cursor.fetchone()
-                if result:
-                    customer_id = result[0]
-                else:
-                    continue
-            else:
-                customer_id = customer_id[0]
-
-            if 'Product' in row and 'Quantity' in row and 'PricePerProduct' in row and 'TotalPrice' in row:
-                product = row.get('Product')
-                quantity = row.get('Quantity')
-                price_per_product = row.get('PricePerProduct')
-                total_price = row.get('TotalPrice')
-
-                time_of_purchase = row.get('OrderTime') if 'OrderTime' in row else row.get('TimeOfOrder')
-
-                if product and quantity and price_per_product and total_price and time_of_purchase:
-
-                    purchase_check_query = f"""
-                        SELECT PurchaseID 
-                        FROM {Purchase_Table} 
-                        WHERE CustomerID = ? AND Product = ? AND TimeOfPurchase = ?
-                    """
-                    Cursor.execute(purchase_check_query, customer_id, product, time_of_purchase)
-                    purchase_id = Cursor.fetchone()
-
-                    if not purchase_id:
-                        purchase_insert_query = f"""
-                            INSERT INTO {Purchase_Table} (CustomerID, Product, Quantity, PricePerProduct, TotalPrice, TimeOfPurchase)
-                            OUTPUT INSERTED.PurchaseID
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        """
-                        Cursor.execute(purchase_insert_query, customer_id, product, quantity, price_per_product, total_price, time_of_purchase)
-                        result = Cursor.fetchone()
-                    else:
+                    if row.get('Slask') is True:
                         continue
-                else:
-                    continue
-            else:
-                continue
 
-        print("Data har infogats framgångsrikt.")
+                    street_name = row.get('StreetName')
+                    city = row.get('City')
+                    postal_code = row.get('PostalCode')
+                    first_name = row.get('FirstName')
+                    last_name = row.get('LastName')
+                    phone_number = row.get('PhoneNumber')
+                    date_of_birth = row.get('DateOfBirth')
+                    customer_registration = row.get('Customer_Registration')
+
+                    address_check_query = f"""
+                        SELECT CustomerAdressID 
+                        FROM {CustomerAdress_Table} 
+                        WHERE StreetName = ? AND City = ? AND PostalCode = ?
+                    """
+                    cursor.execute(address_check_query, street_name, city, postal_code)
+                    address_id = cursor.fetchone()
+
+                    if not address_id:
+
+                        address_insert_query = f"""
+                            INSERT INTO {CustomerAdress_Table} (StreetName, City, PostalCode) 
+                            OUTPUT INSERTED.CustomerAdressID
+                            VALUES (?, ?, ?)
+                        """
+                        cursor.execute(address_insert_query, street_name, city, postal_code)
+                        result = cursor.fetchone()
+                        if result:
+                            address_id = result[0]
+                        else:
+                            continue
+                    else:
+                        address_id = address_id[0]
+
+                    customer_check_query = f"""
+                        SELECT CustomerID 
+                        FROM {Customer_Table} 
+                        WHERE FirstName = ? AND LastName = ? AND Email = ?
+                    """
+                    cursor.execute(customer_check_query, first_name, last_name, email)
+                    customer_id = cursor.fetchone()
+
+                    if not customer_id:
+
+                        customer_insert_query = f"""
+                            INSERT INTO {Customer_Table} (CustomerAdressID, FirstName, LastName, Phonenumber, Email, DateOfBirth, StartOfMembership)
+                            OUTPUT INSERTED.CustomerID
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """
+                        cursor.execute(customer_insert_query, address_id, first_name, last_name, phone_number, email, date_of_birth, customer_registration)
+                        result = cursor.fetchone()
+                        if result:
+                            customer_id = result[0]
+                        else:
+                            continue
+                    else:
+                        customer_id = customer_id[0]
+
+                    if 'Product' in row and 'Quantity' in row and 'PricePerProduct' in row and 'TotalPrice' in row:
+                        product = row.get('Product')
+                        quantity = row.get('Quantity')
+                        price_per_product = row.get('PricePerProduct')
+                        total_price = row.get('TotalPrice')
+                        time_of_purchase = row.get('OrderTime') if 'OrderTime' in row else row.get('TimeOfOrder')
+
+                        if product and quantity and price_per_product and total_price and time_of_purchase:
+                            purchase_check_query = f"""
+                                SELECT PurchaseID 
+                                FROM {Purchase_Table} 
+                                WHERE CustomerID = ? AND Product = ? AND TimeOfPurchase = ?
+                            """
+                            cursor.execute(purchase_check_query, customer_id, product, time_of_purchase)
+                            purchase_id = cursor.fetchone()
+
+                            if not purchase_id:
+
+                                purchase_insert_query = f"""
+                                    INSERT INTO {Purchase_Table} (CustomerID, Product, Quantity, PricePerProduct, TotalPrice, TimeOfPurchase)
+                                    OUTPUT INSERTED.PurchaseID
+                                    VALUES (?, ?, ?, ?, ?, ?)
+                                """
+                                cursor.execute(purchase_insert_query, customer_id, product, quantity, price_per_product, total_price, time_of_purchase)
+                except Exception as row_error:
+                    print(f"Error processing row {index}: {row_error}")
+                    continue
+
+            conn.commit()
+            print(f"Batch {i // batch_size + 1} inserted successfully!")
+
+        print("All data has been successfully inserted.")
 
     except Exception as e:
         print(f"Error occurred during data insertion: {e}")
-        Connect.rollback()
-    
-    Cursor.close()
-    Connect.close()
+        conn.rollback()
+    finally:
+        conn.close()
 
-Webshop_Data = pd.read_excel(Kunddata_Webbshop)
+Webshop_Data = pd.read_excel(Kunddata_Webbshop, engine='openpyxl')
 Webshop_Data['Slask'] = False
 Control_Data = pd.read_excel(Control_Data)
-
-print('Koden startar')
+print(f"Antal rader i Webshop_Data: {len(Webshop_Data)}")
 
 Create_Database()
 Create_Table_CustomerAdress()
@@ -708,7 +771,7 @@ Control_Price_Per_Product(Webshop_Data)
 Control_Total_Price(Webshop_Data)
 Control_Time_Of_Order(Webshop_Data)
 valid_data = Finalize_Slask(Webshop_Data, Slaskfil)
-Insert_Customer_Data(valid_data)
+Insert_Customer_Data(valid_data, batch_size=100)
 
 del Webshop_Data
 
